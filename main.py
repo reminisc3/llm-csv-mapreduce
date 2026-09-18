@@ -43,6 +43,7 @@ def _env_int(name: str, default: int) -> int:
 @dataclass(frozen=True)
 class Settings:
     csv_file_path: str
+    csv_encoding: str
     llm_endpoint: str
     sanitize_pii: bool
     sensitive_columns: List[str]
@@ -60,6 +61,7 @@ class Settings:
     def from_environment(cls) -> "Settings":
         settings = cls(
             csv_file_path=os.getenv("CSV_FILE_PATH", "large_sales_data.csv"),
+            csv_encoding=os.getenv("CSV_ENCODING", "cp1252"),
             llm_endpoint=os.getenv(
                 "LLM_ENDPOINT", "http://localhost:8080/completion"
             ),
@@ -147,16 +149,22 @@ class DataSanitizer:
 class CSVChunker:
     """Chunks CSV rows into Markdown blocks fitting context constraints."""
     
-    def __init__(self, max_tokens: int = 30000, chars_per_token: int = 4):
+    def __init__(
+        self,
+        max_tokens: int = 30000,
+        chars_per_token: int = 4,
+        encoding: str = "cp1252",
+    ):
         self.max_tokens = max_tokens
         self.chars_per_token = chars_per_token
+        self.encoding = encoding
 
     def chunk_csv(self, filepath: str, sanitizer: DataSanitizer) -> List[str]:
         chunks = []
         current_chunk_rows = []
         current_token_count = 0
 
-        with open(filepath, mode='r', encoding='utf-8') as f:
+        with open(filepath, mode='r', encoding=self.encoding, newline="") as f:
             reader = csv.DictReader(f)
             headers = reader.fieldnames
             header_str = " | ".join(headers) + "\n" + "|".join(["---"] * len(headers)) + "\n"
@@ -256,6 +264,7 @@ if __name__ == "__main__":
             settings.max_context_tokens - settings.max_llm_output_tokens,
         ),
         chars_per_token=settings.token_estimate_chars_per_token,
+        encoding=settings.csv_encoding,
     )
     chunks = chunker.chunk_csv(settings.csv_file_path, sanitizer)
     print(f"Created {len(chunks)} chunks.")
