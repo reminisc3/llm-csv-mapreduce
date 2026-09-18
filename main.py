@@ -45,6 +45,7 @@ class Settings:
     csv_file_path: str
     csv_encoding: str
     llm_endpoint: str
+    llm_api_format: str
     sanitize_pii: bool
     sensitive_columns: List[str]
     presidio_language: str
@@ -65,6 +66,7 @@ class Settings:
             llm_endpoint=os.getenv(
                 "LLM_ENDPOINT", "http://localhost:8080/completion"
             ),
+            llm_api_format=os.getenv("LLM_API_FORMAT", "auto").strip().lower(),
             sanitize_pii=_env_bool("SANITIZE_PII", False),
             sensitive_columns=[
                 column.strip().lower()
@@ -99,6 +101,10 @@ class Settings:
             raise ValueError(
                 "CHUNK_MAX_TOKENS + MAX_LLM_OUTPUT_TOKENS must be less than "
                 "MAX_CONTEXT_TOKENS"
+            )
+        if settings.llm_api_format not in {"auto", "llama_cpp", "openai"}:
+            raise ValueError(
+                "LLM_API_FORMAT must be one of: auto, llama_cpp, openai"
             )
         return settings
 
@@ -199,28 +205,46 @@ class LlamaCppAnalyzer:
     def __init__(
         self,
         endpoint: str = "http://localhost:8080/completion",
+        api_format: str = "auto",
         max_output_tokens: int = 1024,
         timeout_seconds: int = 120,
         map_prompt_template: str = DEFAULT_MAP_PROMPT,
         reduce_prompt_template: str = DEFAULT_REDUCE_PROMPT,
     ):
         self.endpoint = endpoint
+        self.api_format = api_format
         self.max_output_tokens = max_output_tokens
         self.timeout_seconds = timeout_seconds
         self.map_prompt_template = map_prompt_template
         self.reduce_prompt_template = reduce_prompt_template
 
     def query_llm(self, prompt: str) -> str:
-        payload = {
-            "prompt": prompt,
-            "temperature": 0.2,
-            "n_predict": self.max_output_tokens,
-        }
+        use_openai_format = self.api_format == "openai" or (
+            self.api_format == "auto"
+            and self.endpoint.rstrip("/").endswith("/chat/completions")
+        )
+        if use_openai_format:
+            payload = {
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2,
+                "max_tokens": self.max_output_tokens,
+            }
+        else:
+            payload = {
+                "prompt": prompt,
+                "temperature": 0.2,
+                "n_predict": self.max_output_tokens,
+            }
         response = requests.post(
             self.endpoint, json=payload, timeout=self.timeout_seconds
         )
         response.raise_for_status()
-        return response.json().get("content", "")
+        result = response.json()
+        if use_openai_format:
+            return result.get("choices", [{}])[0].get("message", {}).get(
+                "content", ""
+            )
+        return result.get("content", "")
 
     def map_reduce_analysis(self, chunks: List[str], goal_prompt: str) -> str:
         intermediate_summaries = []
@@ -271,6 +295,7 @@ if __name__ == "__main__":
 
     analyzer = LlamaCppAnalyzer(
         endpoint=settings.llm_endpoint,
+        api_format=settings.llm_api_format,
         max_output_tokens=settings.max_llm_output_tokens,
         timeout_seconds=settings.request_timeout_seconds,
         map_prompt_template=settings.map_prompt_template,
