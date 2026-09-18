@@ -1,7 +1,11 @@
 import csv
+from datetime import datetime, timezone
+import json
 import os
+from pathlib import Path
+from secrets import token_hex
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 import requests  # To interface with llama.cpp server
@@ -54,6 +58,7 @@ class Settings:
     max_llm_output_tokens: int
     token_estimate_chars_per_token: int
     request_timeout_seconds: int
+    conversation_log_path: str
     analysis_goal: str
     map_prompt_template: str
     reduce_prompt_template: str
@@ -83,6 +88,9 @@ class Settings:
                 "TOKEN_ESTIMATE_CHARS_PER_TOKEN", 4
             ),
             request_timeout_seconds=_env_int("REQUEST_TIMEOUT_SECONDS", 600),
+            conversation_log_path=os.getenv(
+                "CONVERSATION_LOG_PATH", "logs/conversations.jsonl"
+            ),
             analysis_goal=os.getenv(
                 "ANALYSIS_GOAL",
                 "Identify top revenue categories, average order values, and notable outliers.",
@@ -111,6 +119,27 @@ class Settings:
 
 def estimate_tokens(text: str, chars_per_token: int = 4) -> int:
     return max(1, len(text) // chars_per_token)
+
+
+class ConversationLogger:
+    """Writes one durable JSON event per LLM conversation step."""
+
+    def __init__(self, filepath: Optional[str] = None):
+        self.filepath = Path(filepath) if filepath else None
+
+    def log(self, event: str, **details: Any) -> None:
+        if self.filepath is None:
+            return
+
+        self.filepath.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "event": event,
+            **details,
+        }
+        with self.filepath.open("a", encoding="utf-8") as log_file:
+            log_file.write(json.dumps(record, ensure_ascii=True) + "\n")
+            log_file.flush()
 
 class DataSanitizer:
     """Removes PII patterns and targeted sensitive columns."""
@@ -210,6 +239,7 @@ class LlamaCppAnalyzer:
         timeout_seconds: int = 600,
         map_prompt_template: str = DEFAULT_MAP_PROMPT,
         reduce_prompt_template: str = DEFAULT_REDUCE_PROMPT,
+        conversation_logger: Optional[ConversationLogger] = None,
     ):
         self.endpoint = endpoint
         self.api_format = api_format
@@ -217,8 +247,16 @@ class LlamaCppAnalyzer:
         self.timeout_seconds = timeout_seconds
         self.map_prompt_template = map_prompt_template
         self.reduce_prompt_template = reduce_prompt_template
+        self.conversation_logger = conversation_logger or ConversationLogger()
 
-    def query_llm(self, prompt: str) -> str:
+    def query_llm(
+        self,
+        prompt: str,
+        phase: str = "unknown",
+        chunk_number: Optional[int] = None,
+        chunk_count: Optional[int] = None,
+    ) -> str:
+        request_id = token_hex(8)
         use_openai_format = self.api_format == "openai" or (
             self.api_format == "auto"
             and self.endpoint.rstrip("/").endswith("/chat/completions")
@@ -235,16 +273,51 @@ class LlamaCppAnalyzer:
                 "temperature": 0.2,
                 "n_predict": self.max_output_tokens,
             }
-        response = requests.post(
-            self.endpoint, json=payload, timeout=self.timeout_seconds
+        self.conversation_logger.log(
+            "request_started",
+            request_id=request_id,
+            phase=phase,
+            chunk_number=chunk_number,
+            chunk_count=chunk_count,
+            endpoint=self.endpoint,
+            api_format="openai" if use_openai_format else "llama_cpp",
+            prompt=prompt,
+            payload=payload,
         )
-        response.raise_for_status()
-        result = response.json()
-        if use_openai_format:
-            return result.get("choices", [{}])[0].get("message", {}).get(
-                "content", ""
+        try:
+            response = requests.post(
+                self.endpoint, json=payload, timeout=self.timeout_seconds
             )
-        return result.get("content", "")
+            response.raise_for_status()
+            result = response.json()
+            if use_openai_format:
+                content = result.get("choices", [{}])[0].get("message", {}).get(
+                    "content", ""
+                )
+            else:
+                content = result.get("content", "")
+        except Exception as error:
+            self.conversation_logger.log(
+                "request_failed",
+                request_id=request_id,
+                phase=phase,
+                chunk_number=chunk_number,
+                chunk_count=chunk_count,
+                error_type=type(error).__name__,
+                error=str(error),
+            )
+            raise
+
+        self.conversation_logger.log(
+            "response_completed",
+            request_id=request_id,
+            phase=phase,
+            chunk_number=chunk_number,
+            chunk_count=chunk_count,
+            status_code=response.status_code,
+            response=content,
+        )
+        return content
 
     def map_reduce_analysis(self, chunks: List[str], goal_prompt: str) -> str:
         intermediate_summaries = []
@@ -258,8 +331,19 @@ class LlamaCppAnalyzer:
                 chunk_number=i + 1,
                 chunk_count=len(chunks),
             )
-            summary = self.query_llm(map_prompt)
+            summary = self.query_llm(
+                map_prompt,
+                phase="map",
+                chunk_number=i + 1,
+                chunk_count=len(chunks),
+            )
             intermediate_summaries.append(f"### Chunk {i+1} Summary:\n{summary}")
+            self.conversation_logger.log(
+                "map_chunk_completed",
+                phase="map",
+                chunk_number=i + 1,
+                chunk_count=len(chunks),
+            )
 
         print("\n--- REDUCE PHASE: Generating Final Analysis ---")
         combined_summaries = "\n\n".join(intermediate_summaries)
@@ -268,7 +352,11 @@ class LlamaCppAnalyzer:
             combined_summaries=combined_summaries,
             chunk_count=len(chunks),
         )
-        return self.query_llm(reduce_prompt)
+        return self.query_llm(
+            reduce_prompt,
+            phase="reduce",
+            chunk_count=len(chunks),
+        )
 
 
 # --- Example Usage ---
@@ -300,6 +388,7 @@ if __name__ == "__main__":
         timeout_seconds=settings.request_timeout_seconds,
         map_prompt_template=settings.map_prompt_template,
         reduce_prompt_template=settings.reduce_prompt_template,
+        conversation_logger=ConversationLogger(settings.conversation_log_path),
     )
 
     final_report = analyzer.map_reduce_analysis(chunks, settings.analysis_goal)
