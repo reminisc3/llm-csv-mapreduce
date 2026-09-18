@@ -82,7 +82,7 @@ class Settings:
             token_estimate_chars_per_token=_env_int(
                 "TOKEN_ESTIMATE_CHARS_PER_TOKEN", 4
             ),
-            request_timeout_seconds=_env_int("REQUEST_TIMEOUT_SECONDS", 120),
+            request_timeout_seconds=_env_int("REQUEST_TIMEOUT_SECONDS", 600),
             analysis_goal=os.getenv(
                 "ANALYSIS_GOAL",
                 "Identify top revenue categories, average order values, and notable outliers.",
@@ -207,7 +207,7 @@ class LlamaCppAnalyzer:
         endpoint: str = "http://localhost:8080/completion",
         api_format: str = "auto",
         max_output_tokens: int = 1024,
-        timeout_seconds: int = 120,
+        timeout_seconds: int = 600,
         map_prompt_template: str = DEFAULT_MAP_PROMPT,
         reduce_prompt_template: str = DEFAULT_REDUCE_PROMPT,
     ):

@@ -24,6 +24,6 @@ Copy `.env.sample` to `.env` and adjust the values for your environment. Install
 
 PII sanitization is disabled by default. Set `SANITIZE_PII=true` to enable Presidio detection and anonymization. `SENSITIVE_COLUMNS` is a comma-separated list of columns that should always be redacted when sanitization is enabled.
 
-The CSV path, CSV encoding (`CSV_ENCODING`, default `cp1252`), LLM endpoint, API format, context window, chunk limit, output limit, token estimation ratio, and request timeout are all configurable through `.env`. Use `CSV_ENCODING=utf-8` for UTF-8 files. `LLM_API_FORMAT=auto` detects OpenAI chat endpoints ending in `/chat/completions`; use `openai` or `llama_cpp` to override detection. `CHUNK_MAX_TOKENS` plus `MAX_LLM_OUTPUT_TOKENS` must remain below `MAX_CONTEXT_TOKENS`.
+The CSV path, CSV encoding (`CSV_ENCODING`, default `cp1252`), LLM endpoint, API format, context window, chunk limit, output limit, token estimation ratio, and request timeout (`REQUEST_TIMEOUT_SECONDS`, default 600 seconds per request) are all configurable through `.env`. Use `CSV_ENCODING=utf-8` for UTF-8 files. `LLM_API_FORMAT=auto` detects OpenAI chat endpoints ending in `/chat/completions`; use `openai` or `llama_cpp` to override detection. `CHUNK_MAX_TOKENS` plus `MAX_LLM_OUTPUT_TOKENS` must remain below `MAX_CONTEXT_TOKENS`.
 
 The analysis goal is configured with `ANALYSIS_GOAL`. `MAP_PROMPT_TEMPLATE` and `REDUCE_PROMPT_TEMPLATE` customize the prompts while retaining the placeholders shown in `.env.sample`. Use `\n` for line breaks in `.env` values.
