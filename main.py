@@ -8,18 +8,18 @@ import requests  # To interface with llama.cpp server
 
 
 DEFAULT_MAP_PROMPT = (
-    "<|im_start|>system\nYou are a data analysis assistant.<|im_end|>\n"
-    "<|im_start|>user\nPerform the following task on this dataset subset: "
-    "{goal_prompt}\nData:\n{chunk}\n"
-    "Provide structured metrics, key trends, and numerical insights.<|im_end|>\n"
-    "<|im_start|>assistant\n"
+    "<start_of_turn>user\nYou are a data analysis assistant.\n"
+    "Perform the following task on this dataset subset: {goal_prompt}\n"
+    "Data:\n{chunk}\n"
+    "Provide structured metrics, key trends, and numerical insights."
+    "<end_of_turn>\n<start_of_turn>model\n"
 )
 DEFAULT_REDUCE_PROMPT = (
-    "<|im_start|>system\nYou are a lead data scientist.<|im_end|>\n"
-    "<|im_start|>user\nBelow are regional summaries of a larger dataset. "
+    "<start_of_turn>user\nYou are a lead data scientist.\n"
+    "Below are regional summaries of a larger dataset. "
     "Combine these insights into a single unified executive summary for the "
     "overall goal: {goal_prompt}\n\nIntermediate Summaries:\n"
-    "{combined_summaries}<|im_end|>\n<|im_start|>assistant\n"
+    "{combined_summaries}<end_of_turn>\n<start_of_turn>model\n"
 )
 
 
